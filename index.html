@@ -5,7 +5,7 @@
 <title>Kermess Prüfungen</title>
 
 <style>
-  body { margin:0; font-family:Arial; }
+  body { margin:0; font-family:Arial, sans-serif; }
 
   #setup { padding:40px; }
 
@@ -18,32 +18,47 @@
   }
 
   button {
-    padding:10px 20px;
-    font-size:18px;
+    padding:8px 14px;
+    font-size:15px;
     margin-right:10px;
+    cursor:pointer;
   }
 
   #editorContainer { display:none; height:100vh; }
 
   #topbar {
-    height:40px;
+    height:48px;
     padding:8px 16px;
     background:#f2f2f2;
     border-bottom:1px solid #ddd;
     font-size:14px;
+    box-sizing:border-box;
   }
 
   textarea {
     width:100%;
-    height:calc(100vh - 40px);
+    height:calc(100vh - 48px);
     border:none;
     outline:none;
     resize:none;
     font-size:18px;
+    line-height:1.5;
     padding:20px;
+    box-sizing:border-box;
   }
 
-  #status { float:right; color:#555; }
+  #status {
+    float:right;
+    color:#555;
+    margin-top:6px;
+  }
+
+  #finishedScreen {
+    display:none;
+    padding:60px;
+    font-size:24px;
+    text-align:center;
+  }
 </style>
 </head>
 
@@ -52,27 +67,44 @@
 <div id="setup">
   <h2>Kermess Prüfungen</h2>
 
-  <input id="klasse" placeholder="Klasse (z. B. BFS13)">
+  <input id="klasse" placeholder="Klasse, z. B. BFS13">
   <input id="nachname" placeholder="Nachname">
   <input id="vorname" placeholder="Vorname">
 
-  <button onclick="startPruefung()">Prüfung starten (USB wählen)</button>
+  <button onclick="startPruefung()">Prüfung starten / USB-Ordner wählen</button>
   <button onclick="bestehendeDatei()">Vorhandene Datei öffnen</button>
 </div>
 
 <div id="editorContainer">
   <div id="topbar">
     <span id="filenameInfo">–</span>
+
+    <button onclick="beenden()" style="margin-left:20px;">
+      Prüfung beenden
+    </button>
+
     <span id="status">Nicht gespeichert</span>
   </div>
 
-  <textarea id="editor" spellcheck="false"></textarea>
+  <textarea id="editor"
+    spellcheck="false"
+    autocomplete="off"
+    autocorrect="off"
+    autocapitalize="off"></textarea>
+</div>
+
+<div id="finishedScreen">
+  <h1>Prüfung abgegeben</h1>
+  <p>Die Datei wurde gespeichert.</p>
+  <p>Das Gerät kann jetzt geschlossen oder ausgeschaltet werden.</p>
 </div>
 
 <script>
 let dirHandle = null;
 let mainHandle = null;
 let backupHandle = null;
+let autoInterval = null;
+let isFinished = false;
 
 const editor = document.getElementById("editor");
 const status = document.getElementById("status");
@@ -81,18 +113,18 @@ const filenameInfo = document.getElementById("filenameInfo");
 function formatDatum() {
   const d = new Date();
   return String(d.getFullYear()).slice(2) +
-         String(d.getMonth()+1).padStart(2,'0') +
-         String(d.getDate()).padStart(2,'0');
+         String(d.getMonth() + 1).padStart(2, "0") +
+         String(d.getDate()).padStart(2, "0");
 }
 
 function clean(text) {
   return text.trim()
-    .replace(/\s+/g,"-")
-    .replace(/[\\/:*?"<>|]/g,"");
+    .replace(/\s+/g, "-")
+    .replace(/[\\/:*?"<>|]/g, "");
 }
 
 function now() {
-  return new Date().toLocaleTimeString();
+  return new Date().toLocaleTimeString("de-DE");
 }
 
 async function startPruefung() {
@@ -101,7 +133,7 @@ async function startPruefung() {
   const vorname = clean(document.getElementById("vorname").value);
 
   if (!klasse || !nachname || !vorname) {
-    alert("Bitte alles ausfüllen");
+    alert("Bitte Klasse, Nachname und Vorname ausfüllen.");
     return;
   }
 
@@ -116,54 +148,73 @@ async function startPruefung() {
     filenameInfo.textContent = base + ".txt";
 
     startEditor();
-    save("Start");
+    await save("Start gespeichert");
 
   } catch (e) {
-    alert("Fehler: " + e.name);
+    alert("Fehler beim Starten: " + e.name);
+    console.log(e);
   }
 }
 
 async function bestehendeDatei() {
   try {
-    [mainHandle] = await window.showOpenFilePicker();
+    [mainHandle] = await window.showOpenFilePicker({
+      types: [{
+        description: "Textdatei",
+        accept: { "text/plain": [".txt"] }
+      }]
+    });
 
     const file = await mainHandle.getFile();
     editor.value = await file.text();
 
-    const base = file.name.replace(".txt","");
+    const base = file.name.replace(/\.txt$/i, "");
     filenameInfo.textContent = file.name;
 
     dirHandle = await window.showDirectoryPicker();
     backupHandle = await dirHandle.getFileHandle(base + "_BACKUP.txt", { create: true });
 
     startEditor();
+    await save("Datei geladen");
 
   } catch (e) {
-    alert("Fehler: " + e.name);
+    alert("Fehler beim Öffnen: " + e.name);
+    console.log(e);
   }
 }
 
 function startEditor() {
   document.getElementById("setup").style.display = "none";
   document.getElementById("editorContainer").style.display = "block";
+  document.getElementById("finishedScreen").style.display = "none";
 
-  const local = localStorage.getItem("backup");
-  if (local && editor.value === "") editor.value = local;
+  const local = localStorage.getItem("kermess_pruefungen_backup");
+  if (local && editor.value === "") {
+    editor.value = local;
+  }
 
-  setInterval(autoSave, 10000);
+  if (autoInterval) {
+    clearInterval(autoInterval);
+  }
+
+  autoInterval = setInterval(autoSave, 10000);
 }
 
 async function write(handle, text) {
+  if (!handle) return;
+
   const writable = await handle.createWritable();
   await writable.write(text);
   await writable.close();
 }
 
-async function save(reason="Gespeichert") {
+async function save(reason = "Gespeichert") {
+  if (!mainHandle || !backupHandle) return;
+
   try {
     const text = editor.value;
 
-    localStorage.setItem("backup", text);
+    localStorage.setItem("kermess_pruefungen_backup", text);
 
     await write(mainHandle, text);
     await write(backupHandle, text);
@@ -171,26 +222,44 @@ async function save(reason="Gespeichert") {
     status.textContent = reason + " – " + now();
 
   } catch (e) {
-    status.textContent = "Speicherfehler!";
+    status.textContent = "Speicherfehler – " + now();
+    console.log(e);
   }
 }
 
-function autoSave() {
-  save("Auto");
+async function autoSave() {
+  if (!isFinished) {
+    await save("Automatisch gespeichert");
+  }
 }
 
-// STRG+S
-document.addEventListener("keydown", function(e) {
-  if (e.ctrlKey && e.key === "s") {
+document.addEventListener("keydown", async function(e) {
+  if (e.ctrlKey && e.key.toLowerCase() === "s") {
     e.preventDefault();
-    save("Manuell");
+    await save("Manuell gespeichert");
   }
 });
 
-// Endspeichern bei Verlassen
-document.addEventListener("visibilitychange", function() {
-  if (document.visibilityState === "hidden") {
-    save("Ende");
+async function beenden() {
+  if (!confirm("Prüfung wirklich beenden und abgeben?")) return;
+
+  isFinished = true;
+
+  await save("Final gespeichert");
+
+  if (autoInterval) {
+    clearInterval(autoInterval);
+  }
+
+  editor.disabled = true;
+
+  document.getElementById("editorContainer").style.display = "none";
+  document.getElementById("finishedScreen").style.display = "block";
+}
+
+document.addEventListener("visibilitychange", async function() {
+  if (document.visibilityState === "hidden" && !isFinished) {
+    await save("Endspeicherung");
   }
 });
 </script>
