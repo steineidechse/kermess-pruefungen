@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Kermess Prüfungen</title>
+
+<style>
+  body { margin:0; font-family:Arial; }
+
+  #setup { padding:40px; }
+
+  input {
+    display:block;
+    margin-bottom:12px;
+    padding:8px;
+    font-size:18px;
+    width:320px;
+  }
+
+  button {
+    padding:10px 20px;
+    font-size:18px;
+    margin-right:10px;
+  }
+
+  #editorContainer { display:none; height:100vh; }
+
+  #topbar {
+    height:40px;
+    padding:8px 16px;
+    background:#f2f2f2;
+    border-bottom:1px solid #ddd;
+    font-size:14px;
+  }
+
+  textarea {
+    width:100%;
+    height:calc(100vh - 40px);
+    border:none;
+    outline:none;
+    resize:none;
+    font-size:18px;
+    padding:20px;
+  }
+
+  #status { float:right; color:#555; }
+</style>
+</head>
+
+<body>
+
+<div id="setup">
+  <h2>Kermess Prüfungen</h2>
+
+  <input id="klasse" placeholder="Klasse (z. B. BFS13)">
+  <input id="nachname" placeholder="Nachname">
+  <input id="vorname" placeholder="Vorname">
+
+  <button onclick="startPruefung()">Prüfung starten (USB wählen)</button>
+  <button onclick="bestehendeDatei()">Vorhandene Datei öffnen</button>
+</div>
+
+<div id="editorContainer">
+  <div id="topbar">
+    <span id="filenameInfo">–</span>
+    <span id="status">Nicht gespeichert</span>
+  </div>
+
+  <textarea id="editor" spellcheck="false"></textarea>
+</div>
+
+<script>
+let dirHandle = null;
+let mainHandle = null;
+let backupHandle = null;
+
+const editor = document.getElementById("editor");
+const status = document.getElementById("status");
+const filenameInfo = document.getElementById("filenameInfo");
+
+function formatDatum() {
+  const d = new Date();
+  return String(d.getFullYear()).slice(2) +
+         String(d.getMonth()+1).padStart(2,'0') +
+         String(d.getDate()).padStart(2,'0');
+}
+
+function clean(text) {
+  return text.trim()
+    .replace(/\s+/g,"-")
+    .replace(/[\\/:*?"<>|]/g,"");
+}
+
+function now() {
+  return new Date().toLocaleTimeString();
+}
+
+async function startPruefung() {
+  const klasse = clean(document.getElementById("klasse").value);
+  const nachname = clean(document.getElementById("nachname").value);
+  const vorname = clean(document.getElementById("vorname").value);
+
+  if (!klasse || !nachname || !vorname) {
+    alert("Bitte alles ausfüllen");
+    return;
+  }
+
+  const base = `${formatDatum()}_${klasse}_${nachname}_${vorname}`;
+
+  try {
+    dirHandle = await window.showDirectoryPicker();
+
+    mainHandle = await dirHandle.getFileHandle(base + ".txt", { create: true });
+    backupHandle = await dirHandle.getFileHandle(base + "_BACKUP.txt", { create: true });
+
+    filenameInfo.textContent = base + ".txt";
+
+    startEditor();
+    save("Start");
+
+  } catch (e) {
+    alert("Fehler: " + e.name);
+  }
+}
+
+async function bestehendeDatei() {
+  try {
+    [mainHandle] = await window.showOpenFilePicker();
+
+    const file = await mainHandle.getFile();
+    editor.value = await file.text();
+
+    const base = file.name.replace(".txt","");
+    filenameInfo.textContent = file.name;
+
+    dirHandle = await window.showDirectoryPicker();
+    backupHandle = await dirHandle.getFileHandle(base + "_BACKUP.txt", { create: true });
+
+    startEditor();
+
+  } catch (e) {
+    alert("Fehler: " + e.name);
+  }
+}
+
+function startEditor() {
+  document.getElementById("setup").style.display = "none";
+  document.getElementById("editorContainer").style.display = "block";
+
+  const local = localStorage.getItem("backup");
+  if (local && editor.value === "") editor.value = local;
+
+  setInterval(autoSave, 10000);
+}
+
+async function write(handle, text) {
+  const writable = await handle.createWritable();
+  await writable.write(text);
+  await writable.close();
+}
+
+async function save(reason="Gespeichert") {
+  try {
+    const text = editor.value;
+
+    localStorage.setItem("backup", text);
+
+    await write(mainHandle, text);
+    await write(backupHandle, text);
+
+    status.textContent = reason + " – " + now();
+
+  } catch (e) {
+    status.textContent = "Speicherfehler!";
+  }
+}
+
+function autoSave() {
+  save("Auto");
+}
+
+// STRG+S
+document.addEventListener("keydown", function(e) {
+  if (e.ctrlKey && e.key === "s") {
+    e.preventDefault();
+    save("Manuell");
+  }
+});
+
+// Endspeichern bei Verlassen
+document.addEventListener("visibilitychange", function() {
+  if (document.visibilityState === "hidden") {
+    save("Ende");
+  }
+});
+</script>
+
+</body>
+</html>
